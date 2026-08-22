@@ -164,6 +164,7 @@ schtasks /Delete /TN "dsh-web-restart-20s" /F
 | 倒计时/路径对不上 | vbs 的 `-Seconds`、`lib/index.js` 的 `SECONDS`、ps1 的 `$delay` 要一致；live 文件路径（ps1 `$live` 与 index.js `LIVE`）必须相同，否则页面读不到重启状态 |
 | `link:` 指向旧路径 | 若迁移过插件目录，重新执行 `dsh plugin --profile web add link:<新路径>`；否则下次 `pnpm install` 会按 `package.json` 里旧的 `link:` 记录重链回原位置 |
 | 计划任务创建失败 | 以普通用户身份运行（勿用 `/RU SYSTEM`），或用 `/F` 覆盖同名任务 |
+| 按钮不出现 / 点击无反馈 / 不自动刷新 | 见 **[docs/troubleshooting.md](docs/troubleshooting.md)**：五步自检 + 症状对照表（悬空 link、侧边栏类名变化、ps1 无 BOM 中文路径乱码等真实案例） |
 
 </details>
 
