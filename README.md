@@ -47,25 +47,142 @@ DSH Web 是常驻宿主进程，改插件、改配置、装新 bundle 后都必�
 | 浏览器 | 在 **Windows 11 + 谷歌 Chrome** 开发验证；Chromium 系（Edge 等）可用（client 仅使用标准 DOM API） |
 | DSH Web | 侧边栏定位依赖当前 dsh web 构建的 CSS Modules 类名，DSH 升级后可能需要适配选择器 |
 
+## 安装
+
+本插件由**两部分**组成，缺一不可：
+
+1. **插件包**（本仓库）——client 侧边栏按钮 + host `/_dsh/dsh-restart/state|trigger` 路由与 `dsh_restart` 工具；
+2. **重启脚本链**——真正的"杀进程 → 拉起 → 自检"落在 3 个本地脚本（`.ps1` / `.vbs` / `.bat`）+ 1 个计划任务上，**不在 npm 包里**，由仓库 `docs/setup/` 提供可复刻模板。
+
+> **路径约定**：下文及 README 各处的 `E:\pi-windows\`、`D:\dsh-web\做项目\...` 均为作者本机示例路径；CLI 里请替换为你自己的目录。
+
+### 前置条件
+
+| 条件 | 说明 |
+|---|---|
+| 操作系统 | Windows（host 端依赖 `schtasks` / `wscript` / PowerShell） |
+| DSH Web | 已安装 `@deepseek-ai/dsh` 并能 `dsh web` 启动（0.1.0-rc.x） |
+| Node.js | ≥ 24.11（`package.json` engines；用 DSH 随附的 Node 即可） |
+| 权限 | 当前用户可创建计划任务（普通用户默认可为自己的账户建任务） |
+| 可选 | `modlens` 插件（自检探针默认 `GET /modlens/paste`；未装则按下方说明改探针） |
+
+### 第 1 步：注册插件包
+
+```powershell
+# 方式 A：克隆到本地，用 link: 协议注册（推荐，便于后续改代码/host 常量）
+git clone https://github.com/lnyuqian/dsh-restart-plugin.git D:\dsh-web\dsh-restart-plugin
+dsh plugin --profile web add link:D:\dsh-web\dsh-restart-plugin
+
+# 方式 B：不 clone，直接从 GitHub 安装
+dsh plugin --profile web add git+https://github.com/lnyuqian/dsh-restart-plugin.git
+```
+
+`dsh plugin --profile web <子命令>` 等价于在 `~/.dsh/profiles/web`（DSH web profile）里执行 `pnpm <子命令>`；`add link:<目录>` 用 pnpm 的 `link:` 协议把本地目录注册为该 profile 的依赖。注册完成后：
+
+1. 停掉正在运行的 dsh web；
+2. 重新 `dsh web` 启动；
+3. 浏览器打开 `http://127.0.0.1:3080`，按 **Ctrl+Shift+R** 硬刷新。
+
+此时应能看到：侧边栏出现重启按钮、`http://127.0.0.1:3080/_dsh/dsh-restart/state` 返回 `{"ok":true,...}`、对话工具列表出现 `dsh_restart`。**但此时点按钮/调工具会失败**——计划任务还不存在，继续第 2 步。
+
+> 若按钮未出现（client bundle 未重建）：在 DSH 源码树跑 `pnpm run dev:web`（或对应构建命令）重建 web artifacts 后重启。
+
+### 第 2 步：部署重启脚本链（一键）
+
+```powershell
+git clone https://github.com/lnyuqian/dsh-restart-plugin.git   # 若第 1 步未 clone
+cd dsh-restart-plugin
+powershell -ExecutionPolicy Bypass -File docs\setup\install.ps1 `
+  -InstallDir "$env:USERPROFILE\.dsh-restart" -Seconds 10
+```
+
+`install.ps1` 自动完成三件事：
+
+1. 把 `docs/setup/` 的 3 个模板复制到 `-InstallDir`，并把所有占位符替换成你的实际路径——`.ps1` 保存为 **UTF-8 带 BOM**（PowerShell 5.1 也能正确读取），`.vbs` / `.bat` 保存为 **GBK**（中文路径下 cmd/wscript 按系统 ANSI 解析正确）；
+2. 注册计划任务（默认名 `dsh-web-restart-20s`，Action 为 `wscript.exe "…\restart-dsh-web-silent.vbs"`，wscript 静默启动保证桌面无窗口）；
+3. 把 `lib/index.js` 顶部的 `LIVE` / `STATUS` / `TASK` / `SECONDS` / `cwd`（以及 `dsh_restart` 工具描述里的路径文案）自动 patch 成你的路径，原文件备份为 `lib/index.js.bak`。
+
+常用参数：`-InstallDir`（脚本存放目录）、`-Seconds`（倒计时秒数，默认 10）、`-TaskName`（计划任务名）、`-SkipIndexJsPatch`（跳过改 index.js）、`-PluginDir`（仓库根目录，默认自动探测）。
+
+### 第 2 步（备选）：手工部署
+
+**（1）复制模板并替换占位符**：把 `docs/setup/` 下 3 个文件复制到你的目录，用文本编辑器全局替换：
+
+| 模板 | 占位符 |
+|---|---|
+| `restart-dsh-web.ps1` | `__LOG_FILE__`、`__STATUS_FILE__`、`__LIVE_FILE__`、`__START_BAT__` |
+| `restart-dsh-web-silent.vbs` | `__PS1_FILE__`、`__SECONDS__` |
+| `dsh-web-restart-start.bat` | `__DSH_CMD__`、`__LOG_FILE__` |
+
+保存时注意编码：`.ps1` 用 UTF-8 带 BOM，`.vbs` / `.bat` 用 GBK（系统 ANSI）。
+
+**（2）注册计划任务**：
+
+```powershell
+schtasks /Create /F /TN "dsh-web-restart-20s" /TR "wscript.exe \"C:\path\to\restart-dsh-web-silent.vbs\"" /SC ONCE /ST 00:00
+```
+
+**（3）改 `lib/index.js` 路径常量**（JS 字符串里 `\` 要写成 `\\`）：
+
+| 常量 | 含义 | 示例 |
+|---|---|---|
+| `LIVE` | live 状态标记文件（client 轮询重启进度） | 必须与脚本里 `$live` 一致 |
+| `STATUS` | 自检状态日志 | 必须与脚本里 `$status` 一致 |
+| `TASK` | 计划任务名 | 必须与 `schtasks /Create` 的任务名一致 |
+| `SECONDS` | 倒计时秒数（仅用于提示文案） | 与 vbs 的 `-Seconds` 一致即可 |
+| `cwd`（`triggerRestart` 内） | `schtasks /Run` 的工作目录 | 任意存在的目录 |
+
+### 第 3 步：验证
+
+```powershell
+# host 路由已挂载
+Invoke-RestMethod http://127.0.0.1:3080/_dsh/dsh-restart/state
+
+# 手动触发一次完整重启（与点按钮等价）
+schtasks /Run /TN "dsh-web-restart-20s"
+# 等倒计时结束后查看自检结果
+Get-Content "$env:USERPROFILE\.dsh-restart\dsh-web-restart-status.txt" | Select-Object -Last 12
+# 期望最后一行：self-check verdict: SUCCESS
+```
+
+浏览器侧边栏点「重启」→ 页面文字浅灰 10 秒 → 原标签页自动刷新 → 右上角「✅ 重启成功」toast；失败则按钮变红可点重试。
+
+> **自检探针**：模板默认探测 `GET /modlens/paste`（modlens 插件的路由）。若你的环境没有 modlens，把 `restart-dsh-web.ps1` 里的探针 URL 换成任一确定存在的路由（例如本插件自己的 `/_dsh/dsh-restart/state`）。
+
+### 卸载
+
+```powershell
+dsh plugin --profile web remove dsh-restart-plugin
+schtasks /Delete /TN "dsh-web-restart-20s" /F
+# 删除 -InstallDir 部署目录；重启 dsh web + 硬刷新
+```
+
+### 安装常见问题
+
+- **点按钮/调工具提示计划任务不存在**：第 2 步没做，或 `lib/index.js` 的 `TASK` 与注册的任务名不一致。
+- **倒计时/路径对不上**：vbs 的 `-Seconds`、`lib/index.js` 的 `SECONDS`、ps1 的 `$delay` 要一致；live 文件路径（ps1 `$live` 与 index.js `LIVE`）必须相同，否则页面读不到重启状态。
+- **`link:` 指向旧路径**：若迁移过插件目录，重新执行 `dsh plugin --profile web add link:<新路径>`；否则下次 `pnpm install` 会按 `package.json` 里旧的 `link:` 记录重链回原位置。
+- **计划任务创建失败**：以普通用户身份运行（勿用 `/RU SYSTEM`），或用 `/F` 覆盖同名任务。
+
 ## 工作流程
 
 1. 用户要求重启（点按钮，或对模型说「重启 DSH」触发 `dsh_restart` 工具）。
 2. 触发计划任务 `dsh-web-restart-20s`（wscript 静默启动，无 PowerShell 窗口）。
 3. 页面字体整体变浅灰、重启按钮保持原色显示「重启中…」并旋转图标；模型立即用一句话通知用户并结束回合。
-4. 10 秒倒计时结束后，脚本自动执行：杀掉 127.0.0.1:3080 的旧宿主 → 以 `--no-open` 拉起新实例（不新开浏览器标签页）→ 自检（3080 端口监听 + `GET /modlens/paste` + `GET /`）。
+4. 倒计时结束后，脚本自动执行：杀掉 127.0.0.1:3080 的旧宿主 → 以 `--no-open` 拉起新实例（不新开浏览器标签页）→ 自检（3080 端口监听 + `GET /modlens/paste` + `GET /`）。
 5. 原页面轮询到 `done+success` 后自动刷新，并在右上角弹出「重启成功」toast（约 4 秒自动消失）；失败则重启按钮变红「重启失败·重试」。
-6. 重启后若用户询问结果，可读取状态文件汇报（`E:\pi-windows\dsh-web-restart-status.txt`）。
+6. 重启后若用户询问结果，可读取状态文件汇报（默认 `InstallDir\dsh-web-restart-status.txt`）。
 
 ## 组成
 
 | 部件 | 路径 | 说明 |
 |---|---|---|
-| 重启脚本 | `E:\pi-windows\restart-dsh-web.ps1` | 统一入口，`-Mode Grace -Seconds 10` 为 10 秒倒计时；倒计时写 live 标记，自检后写 verdict |
-| 静默启动器 | `E:\pi-windows\restart-dsh-web-silent.vbs` | wscript 包装，桌面永不弹出 PowerShell 窗口；倒计时秒数在此文件修改 |
+| 重启脚本 | 部署目录 `restart-dsh-web.ps1` | 统一入口：倒计时写 live 标记，杀进程 → 拉起 → 自检 → 写 verdict；模板在 `docs/setup/`（作者本机示例：`E:\pi-windows\restart-dsh-web.ps1`） |
+| 静默启动器 | 部署目录 `restart-dsh-web-silent.vbs` | wscript 包装，桌面永不弹出 PowerShell 窗口；倒计时秒数在此文件修改（作者本机示例：`E:\pi-windows\restart-dsh-web-silent.vbs`） |
 | 计划任务 | `dsh-web-restart-20s` | `schtasks /Run /TN "dsh-web-restart-20s"` 触发（Interactive only），Action 指向静默启动器；任务名保留历史命名 |
-| 启动脚本 | `E:\pi-windows\dsh-web-restart-start.bat` | 以 `--no-open` 拉起新实例：重启不新开浏览器标签页，由原页面自动刷新 |
-| live 标记 | `D:\dsh-web\轻量事务\.dsh-restart-live.json` | `state=countdown/stopping/booting/done`、`deadline`、`success` verdict |
-| 自检日志 | `E:\pi-windows\dsh-web-restart-status.txt` | 每一步时间线 + 最终 `self-check verdict: SUCCESS/FAILED` |
+| 启动脚本 | 部署目录 `dsh-web-restart-start.bat` | 以 `--no-open` 拉起新实例：重启不新开浏览器标签页，由原页面自动刷新（作者本机示例：`E:\pi-windows\dsh-web-restart-start.bat`） |
+| live 标记 | `InstallDir\.dsh-restart-live.json` | `state=countdown/stopping/booting/done`、`deadline`、`success` verdict（作者本机示例：`D:\dsh-web\做项目\.dsh-restart-live.json`） |
+| 自检日志 | `InstallDir\dsh-web-restart-status.txt` | 每一步时间线 + 最终 `self-check verdict: SUCCESS/FAILED`（作者本机示例：`E:\pi-windows\dsh-web-restart-status.txt`） |
 | 持久插件 | 本仓库 | host：`GET/POST /_dsh/dsh-restart/state|trigger` 路由 + `dsh_restart` 工具；client：侧边栏重启按钮（双态）、文字浅灰反馈、成功后自动刷新 + toast 提示。link 到 `~/.dsh/profiles/web` 的 bundles |
 
 ## 使用
@@ -73,7 +190,7 @@ DSH Web 是常驻宿主进程，改插件、改配置、装新 bundle 后都必�
 - **页面按钮**：展开态点设置按钮右侧「重启」；收起态点设置图标上方的 ↻ 图标。
 - **对话触发**：对模型说「重启」即可（`dsh_restart` 工具）。
 - **手动触发**：`schtasks /Run /TN "dsh-web-restart-20s"`。
-- **改倒计时**：编辑 `E:\pi-windows\restart-dsh-web-silent.vbs` 里的 `-Seconds 10`，并同步本仓库 `lib/index.js` 的 `SECONDS` 常量与描述文案。若用 `schtasks /Change /TR` 覆盖 Action，请保持 `wscript.exe "E:\pi-windows\restart-dsh-web-silent.vbs"`，不要写回 powershell.exe（会恢复弹窗）。
+- **改倒计时**：编辑部署目录 `restart-dsh-web-silent.vbs` 里的 `-Seconds 10`，并同步本仓库 `lib/index.js` 的 `SECONDS` 常量与描述文案。若用 `schtasks /Change /TR` 覆盖 Action，请保持 `wscript.exe "…\restart-dsh-web-silent.vbs"`，不要写回 powershell.exe（会恢复弹窗）。
 
 ## 注意事项
 
