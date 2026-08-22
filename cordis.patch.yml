@@ -1,0 +1,5 @@
+# dsh-restart-plugin bundle patch: mounts the DSH restart mode plugin into a
+# profile layer stack. Later layers can still override this row by id.
+- insert:
+    - id: dsh-restart-plugin
+      name: 'dsh-restart-plugin'
