@@ -115,11 +115,19 @@ if ($up) {
     Write-Status ('GET / -> ' + $r2.StatusCode)
     $verdict.checks.root = [int]$r2.StatusCode
   } catch {
-    Write-Status ('GET / failed: ' + $_.Exception.Message)
-    $verdict.checks.root = -1
+    # DSH 0.1.2-rc.1+ 的根路径带鉴权：401/403（乃至 3xx）都是 HTTP 栈在正常
+    # 应答的证据，只是要求登录，不算失败；真正失败是连接不上（无 StatusCode）。
+    $code2 = $_.Exception.Response.StatusCode.value__
+    if ($code2) {
+      Write-Status ('GET / -> ' + $code2 + ' (HTTP answered = server alive; 401/403 = auth required)')
+      $verdict.checks.root = [int]$code2
+    } else {
+      Write-Status ('GET / failed: ' + $_.Exception.Message)
+      $verdict.checks.root = -1
+    }
   }
 }
-$verdict.success = ($up -and $verdict.checks.modlens -eq 200 -and $verdict.checks.root -eq 200)
+$verdict.success = ($up -and $verdict.checks.modlens -eq 200 -and $verdict.checks.root -gt 0)
 Write-Live $verdict
 Write-Status ('self-check verdict: ' + $(if ($verdict.success) { 'SUCCESS' } else { 'FAILED' }))
 Write-Status 'done'
