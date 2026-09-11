@@ -33,6 +33,9 @@
     "lib",
     "cordis.patch.yml",
     "README.md",
+    "README_EN.md",
+    "docs/setup",
+    "docs/troubleshooting.md",
     "LICENSE"
   ],
   "dsh": {
