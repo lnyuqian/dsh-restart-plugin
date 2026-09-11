@@ -1,6 +1,6 @@
 {
   "name": "dsh-restart-plugin",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "DSH web 重启插件：侧边栏重启按钮（展开/收起双态）+ 10 秒倒计时 + 页面字体浅灰反馈 + 原页面自动刷新与「重启成功」提示。Host: /_dsh/dsh-restart/state|trigger 路由 + dsh_restart 工具；Client: 零依赖 DOM 实现。",
   "license": "MIT",
   "type": "module",

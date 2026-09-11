@@ -16,10 +16,10 @@
 # render a countdown overlay; the marker is updated through the restart and
 # finishes with a self-check verdict the next session can report.
 #
-# After boot it verifies the server is up. The probe route /modlens/paste is
-# modlens's bundle route; if you do not have modlens installed, point the
-# probe at any route YOUR environment reliably serves (e.g. this plugin's own
-# /_dsh/dsh-restart/state).
+# After boot it verifies the server is up. The probe route
+# /_dsh/dsh-restart/state is this plugin's own state route, always present
+# while the plugin host is running - no dependency on third-party plugins
+# (e.g. modlens).
 #
 # Runs detached via Task Scheduler so killing the old server cannot kill
 # this script.
@@ -89,8 +89,9 @@ Write-Live @{ state = 'booting'; mode = $Mode; at = (Get-Date).ToString('o') }
 Start-Process -FilePath '__START_BAT__' -WindowStyle Hidden
 Write-Status 'new dsh web started'
 
-# 4. Wait for boot, then probe: the modlens bundle mounts GET /modlens/paste,
-#    so any non-404 there means the plugin loaded.
+# 4. Wait for boot, then probe: this plugin's own /_dsh/dsh-restart/state is
+#    always mounted while the host runs, so 200 there means the new server is
+#    healthy - no modlens (or other third-party plugin) dependency.
 $up = $false
 for ($i = 0; $i -lt 150; $i++) {
   if (Get-NetTCPConnection -LocalPort 3080 -State Listen -ErrorAction SilentlyContinue) { $up = $true; break }
@@ -102,21 +103,21 @@ $verdict = @{ state = 'done'; mode = $Mode; at = (Get-Date).ToString('o'); succe
 if ($up) {
   Start-Sleep -Seconds 3
   try {
-    $r = Invoke-WebRequest -Uri ($url + '/modlens/paste') -Method Get -TimeoutSec 10 -UseBasicParsing
-    Write-Status ('GET /modlens/paste -> ' + $r.StatusCode + ' (route present = plugin loaded)')
-    $verdict.checks.modlens = [int]$r.StatusCode
+    $r = Invoke-WebRequest -Uri ($url + '/_dsh/dsh-restart/state') -Method Get -TimeoutSec 10 -UseBasicParsing
+    Write-Status ('GET /_dsh/dsh-restart/state -> ' + $r.StatusCode + ' (route present = server healthy)')
+    $verdict.checks.state = [int]$r.StatusCode
   } catch {
     $code = $_.Exception.Response.StatusCode.value__
-    Write-Status ('GET /modlens/paste -> ' + $code + ' (404 = plugin NOT loaded)')
-    $verdict.checks.modlens = if ($code) { [int]$code } else { -1 }
+    Write-Status ('GET /_dsh/dsh-restart/state -> ' + $code + ' (route missing = problem)')
+    $verdict.checks.state = if ($code) { [int]$code } else { -1 }
   }
   try {
     $r2 = Invoke-WebRequest -Uri $url -TimeoutSec 10 -UseBasicParsing
     Write-Status ('GET / -> ' + $r2.StatusCode)
     $verdict.checks.root = [int]$r2.StatusCode
   } catch {
-    # DSH 0.1.2-rc.1+ 的根路径带鉴权：401/403（乃至 3xx）都是 HTTP 栈在正常
-    # 应答的证据，只是要求登录，不算失败；真正失败是连接不上（无 StatusCode）。
+    # DSH 根路径带鉴权：401/403（乃至 3xx）都是 HTTP 栈在正常应答的证据，
+    # 只是要求登录，不算失败；真正失败是连接不上（无 StatusCode）。
     $code2 = $_.Exception.Response.StatusCode.value__
     if ($code2) {
       Write-Status ('GET / -> ' + $code2 + ' (HTTP answered = server alive; 401/403 = auth required)')
@@ -127,7 +128,7 @@ if ($up) {
     }
   }
 }
-$verdict.success = ($up -and $verdict.checks.modlens -eq 200 -and $verdict.checks.root -gt 0)
+$verdict.success = ($up -and $verdict.checks.state -eq 200 -and $verdict.checks.root -gt 0)
 Write-Live $verdict
 Write-Status ('self-check verdict: ' + $(if ($verdict.success) { 'SUCCESS' } else { 'FAILED' }))
 Write-Status 'done'

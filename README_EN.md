@@ -18,7 +18,7 @@ DSH Web is a resident host process — plugin edits, config changes and new bund
 2. Kill it with `Stop-Process` (the PID changes every time; killing the wrong one is risky);
 3. Find the launcher script and boot the service again;
 4. Wait a few seconds and poll the port until it listens;
-5. Verify a plugin route actually loaded (e.g. `/modlens/paste`) before calling the restart "successful";
+5. Verify a plugin route actually loaded (e.g. `/_dsh/dsh-restart/state`) before calling the restart "successful";
 6. Manually reload the browser page, perhaps accepting an unwanted new tab.
 
 That is 5-8 steps across several windows with **zero feedback** in between — you never know which step it is on, or whether it failed. More steps means more ways to break, and every failure starts over from scratch.
@@ -31,7 +31,7 @@ This plugin collapses the whole chain into one sidebar button:
 
 - **Dual-state button**: in the expanded sidebar it sits right of "Settings" as [↻ Restart]; in the collapsed rail it becomes a round ↻ icon above the settings gear, syncing and animating with the sidebar in real time;
 - **Click and go**: triggers a 10-second countdown; page text dims to light-grey as in-progress feedback (the button itself keeps its vivid color);
-- **Fully automatic**: a scheduled task silently kills the old process → boots a fresh instance → self-checks (3080 listening + `GET /modlens/paste` + `GET /`);
+- **Fully automatic**: a scheduled task silently kills the old process → boots a fresh instance → self-checks (3080 listening + `GET /_dsh/dsh-restart/state` + `GET /`);
 - **Original page wrap-up**: after a successful self-check the original tab auto-reloads and a green "✅ Restart OK" toast appears top-right; on failure the button turns red for a one-click retry;
 - **Models can trigger it too**: just say "restart" in the conversation (`dsh_restart` tool) — handy when the current turn needs to wrap up.
 
@@ -60,7 +60,7 @@ The plugin has **two parts**, both required:
 | DSH Web | `@deepseek-ai/dsh` installed and `dsh web` runnable (0.1.0-rc.x) |
 | Node.js | ≥ 24.11 (`package.json` engines; the Node shipped with DSH is fine) |
 | Permissions | Current user may create scheduled tasks (default for an ordinary user's own tasks) |
-| Optional | `modlens` plugin (the self-check probe defaults to `GET /modlens/paste`; see note below if not installed) |
+| Optional | None (the self-check probe uses this plugin's own `/_dsh/dsh-restart/state` route; no third-party plugin is required) |
 
 ### Step 1: register the plugin package
 
@@ -146,7 +146,7 @@ Get-Content "$env:USERPROFILE\.dsh-restart\dsh-web-restart-status.txt" | Select-
 
 In the browser: click "Restart" in the sidebar → page text dims for 10 s → the original tab auto-reloads → green "✅ Restart OK" toast top-right; on failure the button turns red and can be retried.
 
-> **Self-check probe**: the template probes `GET /modlens/paste` by default (a modlens plugin route). If you do not have modlens, point the probe in `restart-dsh-web.ps1` at any route your environment reliably serves (e.g. this plugin's own `/_dsh/dsh-restart/state`).
+> **Self-check probe**: the template probes `GET /_dsh/dsh-restart/state` by default (this plugin's own route, always present while the host runs); a 401/403 on `GET /` (login auth) counts as the server answering, not as failure — only a total lack of an HTTP response is a failure.
 
 ### Uninstall
 
@@ -178,7 +178,7 @@ flowchart LR
   W --> C{10 s countdown<br/>page text dims}
   C --> K[Kill the old host on 3080]
   K --> B[Boot a fresh dsh web with --no-open]
-  B --> P[Self-check: 3080 listening<br/>GET /modlens/paste + GET /]
+  B --> P[Self-check: 3080 listening<br/>GET /_dsh/dsh-restart/state + GET /]
   P --> R{success?}
   R -- success --> X[Original tab auto-reloads<br/>green "Restart OK" toast]
   R -- failed --> F[Button turns red, retry]
@@ -187,7 +187,7 @@ flowchart LR
 1. The user asks for a restart (clicks the button, or the model calls `dsh_restart`).
 2. The scheduled task `dsh-web-restart-20s` fires (wscript silent launch, no PowerShell window).
 3. Page text dims to light-grey while the restart button stays vivid, shows "Restarting…" with a spinning icon; the model replies in one short sentence and ends the turn immediately.
-4. When the countdown ends, the script: kills the old host on 127.0.0.1:3080 → boots a fresh instance with `--no-open` (no new tab) → self-checks (3080 listening + `GET /modlens/paste` + `GET /`).
+4. When the countdown ends, the script: kills the old host on 127.0.0.1:3080 → boots a fresh instance with `--no-open` (no new tab) → self-checks (3080 listening + `GET /_dsh/dsh-restart/state` + `GET /`).
 5. The original page polls for `done+success`, auto-reloads and shows a "Restart OK" toast top-right (auto-dismisses after ~4 s); on failure the button turns red with "Restart failed · retry".
 6. If asked about the result afterwards, the status file can be reported (default `InstallDir\dsh-web-restart-status.txt`).
 

@@ -140,7 +140,33 @@ $r.Content
   `wscript.exe` + vbs 路径；vbs 内 `-File` 指向的 ps1 存在；ps1 的
   `$live` / `$status` 与 `lib/index.js` 的 `LIVE` / `STATUS` 常量一致。
 
-### E. 其它经验
+### E. 重启明明成功了（端口/进程都换了），按钮却标红「重启失败·重试」
+
+**根因：自检脚本把"需要登录的 HTTP 响应"误判为"服务不可用"。**
+
+DSH Web 的根路径（`GET /`）带登录鉴权，未登录探针返回 401。旧版自检脚本
+（以及依赖 `/modlens/paste==200` 的探针）把这类响应记成失败：
+
+- 探针 `GET /` 返回 401 时，Windows PowerShell 5.1 的 `Invoke-WebRequest`
+  会抛异常；若 catch 里不读取 `Response.StatusCode` 就落 `-1`，判定
+  `success = (up && state==200 && root==200)` 恒不成立；
+- 探针依赖第三方插件路由（`/modlens/paste`）时，没装该插件返回 404，
+  同样误判失败。
+
+**修复（v0.1.1 已内置）**：
+
+- 探针改用本插件自己的 `/_dsh/dsh-restart/state`（宿主在则恒 200，
+  不依赖任何第三方插件）；
+- `GET /` 的任何 HTTP 状态码（401/403/3xx）都视为"服务在应答、健康"，
+  只有完全连不上（无状态码）才判 `-1`；
+- 判定公式：`success = (up && state==200 && root>0)`。
+
+**自检验证**（5 步自检第 5 步）：触发重启后看
+`C:\Users\Administrator\.dsh-restart\.dsh-restart-live.json`，
+期望 `"success":true` 且 `"checks":{"state":200,"root":401}`；
+status 日志最后一行 `self-check verdict: SUCCESS`。
+
+### F. 其它经验
 
 - **lib/index.js 常量必须与脚本链一致**：`TASK` = 计划任务名、
   `LIVE` = ps1 的 `$live`、`STATUS` = ps1 的 `$status`、`SECONDS` 文案与
@@ -180,4 +206,5 @@ Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" -ArgumentL
 | v12–v13 | 强化查找兜底；按钮移到设置按钮上方（后被否掉，改回同一行） |
 | v14 | 与设置按钮同一行、黑色文字、无阴影、灰色边框 |
 | v15 | 点击立即乐观变灰（不等网络响应）、z-index 提到最大 |
-| v16 | 20 秒乐观窗口，防御 live 文件陈旧导致的历史 done 撤销变灰（**当前基线**） |
+| v16 | 20 秒乐观窗口，防御 live 文件陈旧导致的历史 done 撤销变灰 |
+| v17+（0.1.1） | 自检探针改本插件 `/_dsh/dsh-restart/state`、`GET /` 的 401/403 视为健康（**当前基线**） |
